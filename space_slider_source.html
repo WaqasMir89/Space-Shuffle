@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Space Tile Slider</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #020818;
+      color: #e0e8f0;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+      gap: 1.25rem;
+    }
+
+    h1 { font-size: 20px; font-weight: 500; letter-spacing: 0.05em; color: #85b7eb; }
+
+    #difficulty { display: flex; gap: 8px; }
+    .diff-btn {
+      padding: 5px 16px; font-size: 13px;
+      border: 1px solid #185fa5; border-radius: 8px;
+      background: transparent; color: #85b7eb; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .diff-btn.active { background: #0c447c; color: #e6f1fb; }
+    .diff-btn:hover:not(.active) { background: #0d1b4b; }
+
+    #hud { display: flex; gap: 2rem; }
+    .stat { text-align: center; }
+    .stat-label { font-size: 11px; color: #6b8cae; text-transform: uppercase; letter-spacing: 0.08em; }
+    .stat-val { font-size: 24px; font-weight: 500; color: #e6f1fb; }
+
+    #board {
+      display: grid;
+      gap: 3px;
+      background: #042c53;
+      border-radius: 10px;
+      padding: 6px;
+    }
+
+    .tile {
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform 0.12s, filter 0.12s;
+      overflow: hidden;
+      position: relative;
+      user-select: none;
+    }
+    .tile:hover:not(.empty) { filter: brightness(1.15); transform: scale(0.97); }
+    .tile.empty { background: #042c53 !important; cursor: default; }
+    .tile canvas { display: block; }
+
+    #win-banner {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 1rem 2rem;
+      background: #0d1b4b;
+      border: 1px solid #185fa5;
+      border-radius: 12px;
+      text-align: center;
+    }
+    #win-banner h2 { font-size: 18px; font-weight: 500; color: #85b7eb; }
+    #win-banner p { font-size: 14px; color: #6b8cae; }
+
+    #actions { display: flex; gap: 10px; }
+    #actions button {
+      padding: 8px 22px; font-size: 13px;
+      border: 1px solid #185fa5; border-radius: 8px;
+      background: transparent; color: #85b7eb; cursor: pointer;
+      transition: background 0.15s;
+    }
+    #actions button:hover { background: #0d1b4b; }
+  </style>
+</head>
+<body>
+
+  <h1>🚀 Space Tile Slider</h1>
+
+  <div id="difficulty">
+    <button class="diff-btn active" data-n="3">3×3 Easy</button>
+    <button class="diff-btn" data-n="4">4×4 Hard</button>
+  </div>
+
+  <div id="hud">
+    <div class="stat"><div class="stat-label">Moves</div><div class="stat-val" id="moves">0</div></div>
+    <div class="stat"><div class="stat-label">Time</div><div class="stat-val" id="timer">0:00</div></div>
+    <div class="stat"><div class="stat-label">Best</div><div class="stat-val" id="best">—</div></div>
+  </div>
+
+  <div id="board"></div>
+
+  <div id="win-banner">
+    <h2>Puzzle solved! 🎉</h2>
+    <p id="win-msg"></p>
+  </div>
+
+  <div id="actions">
+    <button id="shuffle-btn">Shuffle</button>
+    <button id="preview-btn">Preview image</button>
+  </div>
+
+  <!-- Hidden canvas used to generate the space scene image -->
+  <canvas id="src-canvas" style="display:none"></canvas>
+
+  <script>
+    /* ── Scene data ───────────────────────────────────────────── */
+    const STARS = Array.from({ length: 60 }, () => ({
+      x: Math.random() * 640,
+      y: Math.random() * 640,
+      r: Math.random() * 1.5 + 0.3,
+      a: 0.4 + Math.random() * 0.6,
+    }));
+
+    const NEBULA = [
+      { cx: 200, cy: 180, rx: 160, ry: 90,  clr: 'rgba(83,74,183,0.25)' },
+      { cx: 440, cy: 380, rx: 130, ry: 80,  clr: 'rgba(24,95,165,0.2)'  },
+      { cx: 320, cy: 310, rx: 110, ry: 70,  clr: 'rgba(93,202,165,0.13)'},
+    ];
+
+    /* ── Draw the space scene onto a canvas ───────────────────── */
+    function drawScene(ctx, w) {
+      // Deep space background
+      const grd = ctx.createRadialGradient(w/2, w/2, 0, w/2, w/2, w * 0.75);
+      grd.addColorStop(0,   '#1a0a3c');
+      grd.addColorStop(0.45,'#0d1b4b');
+      grd.addColorStop(1,   '#020818');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, w, w);
+
+      // Nebula clouds
+      NEBULA.forEach(n => {
+        const ng = ctx.createRadialGradient(
+          n.cx*w/640, n.cy*w/640, 0,
+          n.cx*w/640, n.cy*w/640, n.rx*w/640
+        );
+        ng.addColorStop(0, n.clr);
+        ng.addColorStop(1, 'transparent');
+        ctx.beginPath();
+        ctx.ellipse(n.cx*w/640, n.cy*w/640, n.rx*w/640, n.ry*w/640, 0, 0, Math.PI*2);
+        ctx.fillStyle = ng;
+        ctx.fill();
+      });
+
+      // Stars
+      STARS.forEach(s => {
+        ctx.beginPath();
+        ctx.arc(s.x*w/640, s.y*w/640, s.r*w/640, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(255,255,255,${s.a})`;
+        ctx.fill();
+      });
+
+      // Ringed planet (outer atmosphere)
+      const pg = ctx.createRadialGradient(w*0.5, w*0.42, w*0.19*0.6, w*0.5, w*0.42, w*0.19);
+      pg.addColorStop(0, 'rgba(55,138,221,0.9)');
+      pg.addColorStop(1, 'rgba(15,110,86,0.6)');
+      ctx.beginPath();
+      ctx.arc(w*0.5, w*0.42, w*0.19, 0, Math.PI*2);
+      ctx.fillStyle = pg;
+      ctx.fill();
+
+      // Planet core cutout
+      ctx.beginPath();
+      ctx.arc(w*0.5, w*0.42, w*0.19*0.72, 0, Math.PI*2);
+      ctx.fillStyle = '#020818';
+      ctx.fill();
+
+      // Outer ring glow
+      const rg2 = ctx.createRadialGradient(w*0.5, w*0.42, w*0.23*0.6, w*0.5, w*0.42, w*0.23);
+      rg2.addColorStop(0, 'rgba(55,138,221,0.4)');
+      rg2.addColorStop(1, 'rgba(24,95,165,0.2)');
+      ctx.beginPath();
+      ctx.arc(w*0.5, w*0.42, w*0.23, 0, Math.PI*2);
+      ctx.fillStyle = rg2;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(w*0.5, w*0.42, w*0.2, 0, Math.PI*2);
+      ctx.fillStyle = '#020818';
+      ctx.fill();
+
+      // Rings (horizontal band)
+      ctx.save();
+      ctx.translate(w*0.5, w*0.42);
+      const ringGrd = ctx.createLinearGradient(-w*0.28, 0, w*0.28, 0);
+      ringGrd.addColorStop(0,    'rgba(55,138,221,0.0)');
+      ringGrd.addColorStop(0.38, 'rgba(55,138,221,0.5)');
+      ringGrd.addColorStop(0.5,  'rgba(55,138,221,0.08)');
+      ringGrd.addColorStop(0.62, 'rgba(55,138,221,0.5)');
+      ringGrd.addColorStop(1,    'rgba(55,138,221,0.0)');
+      ctx.fillStyle = ringGrd;
+      ctx.fillRect(-w*0.28, -w*0.012, w*0.56, w*0.024);
+      ctx.restore();
+
+      // Small background stars/moons bottom section
+      for (let i = 0; i < 5; i++) {
+        const sx = 0.12*w + i*0.19*w;
+        const sy = 0.73*w + Math.sin(i*1.7)*0.04*w;
+        const sr = 0.012*w + (i%2)*0.007*w;
+        const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, sr);
+        sg.addColorStop(0, 'rgba(255,220,120,0.95)');
+        sg.addColorStop(0.5,'rgba(200,180,100,0.5)');
+        sg.addColorStop(1, 'transparent');
+        ctx.beginPath();
+        ctx.arc(sx, sy, sr, 0, Math.PI*2);
+        ctx.fillStyle = sg;
+        ctx.fill();
+      }
+
+      // Warp drive text
+      ctx.font = `bold ${0.028*w}px monospace`;
+      ctx.fillStyle = 'rgba(93,202,165,0.7)';
+      ctx.textAlign = 'left';
+      ['WARP','DRIVE','ONLINE'].forEach((t, i) => {
+        ctx.fillText(t, (0.05 + i*0.3)*w, 0.91*w);
+      });
+    }
+
+    /* ── Game state ───────────────────────────────────────────── */
+    let N = 3, tiles = [], moves = 0, seconds = 0;
+    let timerInterval = null, solved = false;
+    const best = { 3: null, 4: null };
+
+    const srcCanvas = document.getElementById('src-canvas');
+    const srcCtx    = srcCanvas.getContext('2d');
+
+    function getSize() { return 360; }
+
+    /* ── Build / rebuild the board ────────────────────────────── */
+    function buildBoard() {
+      solved = false;
+      document.getElementById('win-banner').style.display = 'none';
+      clearInterval(timerInterval);
+      seconds = 0; moves = 0;
+      document.getElementById('moves').textContent = '0';
+      document.getElementById('timer').textContent = '0:00';
+
+      const sz = getSize();
+      srcCanvas.width = sz; srcCanvas.height = sz;
+      drawScene(srcCtx, sz);
+
+      const total = N * N;
+      tiles = Array.from({ length: total }, (_, i) => i);
+      shuffleTiles();
+      renderTiles();
+
+      timerInterval = setInterval(() => {
+        if (!solved) { seconds++; updateTimer(); }
+      }, 1000);
+    }
+
+    /* ── Render tiles to DOM ──────────────────────────────────── */
+    function renderTiles() {
+      const board = document.getElementById('board');
+      board.innerHTML = '';
+      const sz  = getSize();
+      const ts  = Math.floor((sz - 3*(N-1) - 12) / N);
+      board.style.gridTemplateColumns = `repeat(${N}, ${ts}px)`;
+
+      tiles.forEach((val, idx) => {
+        const div = document.createElement('div');
+        div.className = 'tile' + (val === N*N-1 ? ' empty' : '');
+        div.style.width  = ts + 'px';
+        div.style.height = ts + 'px';
+
+        if (val !== N*N-1) {
+          const tc   = document.createElement('canvas');
+          tc.width   = ts; tc.height = ts;
+          const tctx = tc.getContext('2d');
+          const row  = Math.floor(val / N), col = val % N;
+          const tw   = Math.floor(sz / N),  th  = Math.floor(sz / N);
+          tctx.drawImage(srcCanvas, col*tw, row*th, tw, th, 0, 0, ts, ts);
+          div.appendChild(tc);
+          div.style.border = '1px solid rgba(55,138,221,0.3)';
+        }
+
+        div.addEventListener('click', () => handleClick(idx));
+        board.appendChild(div);
+      });
+    }
+
+    /* ── Handle a tile click ──────────────────────────────────── */
+    function handleClick(idx) {
+      if (solved) return;
+      const empty = tiles.indexOf(N*N-1);
+      const r1 = Math.floor(idx/N),   c1 = idx % N;
+      const r2 = Math.floor(empty/N), c2 = empty % N;
+      const adjacent =
+        (Math.abs(r1-r2) === 1 && c1 === c2) ||
+        (Math.abs(c1-c2) === 1 && r1 === r2);
+
+      if (adjacent) {
+        [tiles[idx], tiles[empty]] = [tiles[empty], tiles[idx]];
+        moves++;
+        document.getElementById('moves').textContent = moves;
+        renderTiles();
+        checkWin();
+      }
+    }
+
+    /* ── Win check ────────────────────────────────────────────── */
+    function checkWin() {
+      if (tiles.every((v, i) => v === i)) {
+        solved = true;
+        clearInterval(timerInterval);
+        if (!best[N] || moves < best[N]) best[N] = moves;
+        document.getElementById('best').textContent = best[N];
+        const banner = document.getElementById('win-banner');
+        banner.style.display = 'flex';
+        document.getElementById('win-msg').textContent =
+          `Solved in ${moves} moves · ${formatTime(seconds)}`;
+      }
+    }
+
+    /* ── Shuffle (guarantee solvable + not already solved) ────── */
+    function shuffleTiles() {
+      do {
+        for (let i = tiles.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+        }
+      } while (!isSolvable() || tiles.every((v, i) => v === i));
+    }
+
+    /* ── Solvability check ────────────────────────────────────── */
+    function isSolvable() {
+      let inv = 0;
+      const t = tiles.filter(v => v !== N*N-1);
+      for (let i = 0; i < t.length; i++)
+        for (let j = i+1; j < t.length; j++)
+          if (t[i] > t[j]) inv++;
+      if (N % 2 === 1) return inv % 2 === 0;
+      const emptyRow = Math.floor(tiles.indexOf(N*N-1) / N);
+      return (inv + N - 1 - emptyRow) % 2 === 0;
+    }
+
+    /* ── Timer helpers ────────────────────────────────────────── */
+    function updateTimer() {
+      document.getElementById('timer').textContent = formatTime(seconds);
+    }
+    function formatTime(s) {
+      return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+    }
+
+    /* ── UI event listeners ───────────────────────────────────── */
+    document.querySelectorAll('.diff-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        N = parseInt(btn.dataset.n);
+        document.getElementById('best').textContent = best[N] ?? '—';
+        buildBoard();
+      });
+    });
+
+    document.getElementById('shuffle-btn').addEventListener('click', buildBoard);
+
+    document.getElementById('preview-btn').addEventListener('click', () => {
+      const sz = getSize();
+      const w = window.open('', '_blank', `width=${sz+20},height=${sz+40}`);
+      if (w) {
+        w.document.write(
+          `<body style="margin:0;background:#020818">
+           <img src="${srcCanvas.toDataURL()}" width="${sz}" height="${sz}">
+           </body>`
+        );
+        w.document.close();
+      }
+    });
+
+    /* ── Start ────────────────────────────────────────────────── */
+    buildBoard();
+  </script>
+</body>
+</html>
